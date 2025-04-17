@@ -27,13 +27,11 @@
 # THE SOFTWARE.
 
 TEXT = "TEXT"
+COMMENT = "COMMENT"
 START_TAG = "START_TAG"
-#START_TAG_DONE = "START_TAG_DONE"
 END_TAG = "END_TAG"
 PI = "PI"
-#PI_DONE = "PI_DONE"
 ATTR = "ATTR"
-#ATTR_VAL = "ATTR_VAL"
 
 class XMLSyntaxError(Exception):
     pass
@@ -44,6 +42,10 @@ class XMLTokenizer:
         self.f = f
         self.c = ""
         self.nextch()
+        
+    # Try to clean up after ourself
+    def __del__(self):
+        del self.f
 
     def getch(self):
         c = self.c
@@ -54,7 +56,16 @@ class XMLTokenizer:
         return self.c == ""
 
     def nextch(self):
-        self.c = self.f.read(1)
+        # Use decode and try to be a bit more robust
+        ch = self.f.read(1)
+        try:
+            self.c = ch.decode()
+        except:
+            try:
+                ch += self.f.read(1)
+                self.c = ch.decode()
+            except:
+                self.c = "?"
 
     def skip_ws(self):
         while self.c.isspace():
@@ -128,12 +139,30 @@ class XMLTokenizer:
                     self.expect("?")
                     self.expect(">")
                 elif self.match("!"):
-                    self.expect("-")
-                    self.expect("-")
-                    last3 = ''
+                    # This is either a comment or CDATA
+                    # Note CDATA is returned as TEXT
+                    # Note self.c (i.e. next char) is read ahead
+                    if self.c == "-":
+                        # Comment will begin <!--
+                        for c in "--": self.expect(c)
+                        res[0] = COMMENT
+                        endsWith = "-->"
+                    elif self.c == "[":
+                        # CDATA will begin <[CDATA[
+                        for c in "[CDATA[": self.expect(c)
+                        res[0] = TEXT
+                        endsWith = "]]>"
+                    else:
+                        raise XMLSyntaxError
+                    
+                    text = ""
                     while True:
-                        last3 = last3[-2:] + self.getch()
-                        if last3 == "-->":
+                        # Build up the text
+                        text += self.getch()
+                        # Test to see if we have reached the end of the tag
+                        if len(text) > len(endsWith) and text[-len(endsWith):] == endsWith:
+                            res[1] = text[0:-len(endsWith)]
+                            yield res
                             break
                 else:
                     res[0] = START_TAG
@@ -181,3 +210,4 @@ def text_of(gen, tag):
 
 def tokenize(file):
     return XMLTokenizer(file).tokenize()
+
